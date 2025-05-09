@@ -1,0 +1,30 @@
+plugins {
+    id 'java'
+    id 'application'
+}
+
+group = 'dev.carterbrown'
+version = '1.0-SNAPSHOT'
+
+sourceCompatibility = '17'
+
+repositories {
+    mavenCentral()
+}
+dependencies {
+    implementation("net.dv8tion:JDA:5.5.1")
+    implementation 'com.sun.mail:jakarta.mail:2.0.1'
+    implementation 'io.github.cdimascio:dotenv-java:2.2.4'
+    implementation 'org.slf4j:slf4j-simple:2.0.9'
+
+    testImplementation platform('org.junit:junit-bom:5.10.0')
+    testImplementation 'org.junit.jupiter:junit-jupiter'
+}
+
+test {
+    useJUnitPlatform()
+}
+
+application {
+    mainClass = 'DiscordBot'  // replace with your actual main class
+}
