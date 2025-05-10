@@ -1,29 +1,23 @@
-# Use an official OpenJDK runtime as the base image
+# Use OpenJDK 17 as the base image
 FROM openjdk:17-jdk-slim
 
-# Set the working directory inside the container
+# Set working directory
 WORKDIR /app
 
-# Copy the Gradle wrapper and project files into the container
-COPY gradlew /app/
-COPY gradle /app/gradle
-COPY build.gradle /app/
-COPY settings.gradle /app/
+# Copy the entire project (including Gradle wrapper and wrapper JAR)
+COPY . /app
 
-# Make gradlew executable
-RUN chmod +x gradlew
+# Ensure the Gradle wrapper is executable
+RUN chmod +x ./gradlew
 
-# Copy the source code to the container
-COPY src /app/src
+# Build the fat JAR using Shadow plugin (bundles dependencies)
+RUN ./gradlew clean shadowJar --no-daemon
 
-# Build the project using Gradle
-RUN ./gradlew build
+# Copy .env (optional if you mount with --env-file)
+# COPY .env /app/.env    # if needed, otherwise use --env-file
 
-# Copy the .env file into the container
-COPY .env /app/.env
-
-# Expose the port your application will run on (optional)
+# Expose any ports if necessary
 EXPOSE 8080
 
-# Command to run the bot
-CMD ["./gradlew", "run"]
+# Run the fat JAR (Shadow output contains all dependencies)
+CMD ["java", "-jar", "build/libs/discord-bot-final-1.0-SNAPSHOT-all.jar"]
