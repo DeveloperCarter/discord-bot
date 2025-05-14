@@ -1,53 +1,42 @@
 package dev.carterbrown;
 
-import net.dv8tion.jda.api.entities.Member;
+import net.dv8tion.jda.api.entities.User;
 import net.dv8tion.jda.api.entities.channel.concrete.TextChannel;
-import net.dv8tion.jda.api.events.message.MessageReceivedEvent;
+import net.dv8tion.jda.api.events.interaction.command.SlashCommandInteractionEvent;
+import net.dv8tion.jda.api.interactions.commands.OptionMapping;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import java.util.concurrent.atomic.AtomicInteger;
 
 import java.time.OffsetDateTime;
 import java.util.*;
 import java.util.concurrent.*;
-import java.util.stream.Collectors;
 
 public class CommandHandlers {
     private static final Logger logger = LoggerFactory.getLogger(CommandHandlers.class);
 
-    private static final ScheduledExecutorService scheduler = Executors.newSingleThreadScheduledExecutor();
+    private static final ScheduledExecutorService scheduler = Executors.newScheduledThreadPool(2);
     private static ScheduledFuture<?> spamTask;
     private static String currentSpamTargetId;
     private static final List<String> sentMessageIds = new CopyOnWriteArrayList<>();
 
-    private static final List<String> ALLOWED_CLEAR_CHANNEL_IDS = List.of(
-            "1370867615421169684"
-    );
+    private static final List<String> ALLOWED_CLEAR_CHANNEL_IDS = List.of("1370867615421169684");
+    private static final Random random = new Random();
 
-    public static void handleSpam(MessageReceivedEvent event) {
+    public static void handleSpam(SlashCommandInteractionEvent event) {
         TextChannel channel = event.getChannel().asTextChannel();
-        String content = event.getMessage().getContentDisplay().trim();
+        OptionMapping targetOption = event.getOption("target");
 
-        if (spamTask != null && !spamTask.isCancelled()) {
-            channel.sendMessage("A spam session is already running. Use /stopspam first.").queue();
+        if (targetOption == null) {
+            event.getHook().sendMessage("❌ Please specify a target user.").queue();
             return;
         }
 
-        List<Member> mentioned = event.getMessage().getMentions().getMembers();
-        String targetId;
-        if (!mentioned.isEmpty()) {
-            targetId = mentioned.get(0).getId();
-        } else {
-            String name = content.substring(6).trim();
-            if (name.startsWith("@")) name = name.substring(1);
-            Member memberFromName = event.getGuild()
-                    .getMembersByEffectiveName(name, true)
-                    .stream().findFirst().orElse(null);
-            if (memberFromName == null) {
-                channel.sendMessage("❌ Could not find a user named `" + name + "`. Try tagging them.").queue();
-                return;
-            }
-            targetId = memberFromName.getId();
+        User target = targetOption.getAsUser();
+        String targetId = target.getId();
+
+        if (spamTask != null && !spamTask.isCancelled()) {
+            event.getHook().sendMessage("A spam session is already running. Use /stopspam first.").queue();
+            return;
         }
 
         currentSpamTargetId = targetId;
@@ -55,151 +44,179 @@ public class CommandHandlers {
         spamTask = scheduler.scheduleAtFixedRate(() -> {
             if (currentSpamTargetId != null) {
                 channel.sendMessage("<@" + currentSpamTargetId + ">").queue(sentMsg -> {
-                    if (!sentMessageIds.contains(sentMsg.getId())) {
-                        sentMessageIds.add(sentMsg.getId());
-                        logger.debug("Message ID {} added to sentMessageIds", sentMsg.getId());
-                    }
+                    sentMessageIds.add(sentMsg.getId());
                 });
             }
         }, 0, 3, TimeUnit.SECONDS);
 
-        channel.sendMessage("Started spamming <@" + currentSpamTargetId + "> every 3 seconds.").queue();
+        event.getHook().sendMessage("Started spamming <@" + currentSpamTargetId + "> every 3 seconds.").queue();
     }
 
-    public static void handleStopSpam(MessageReceivedEvent event) {
+    public static void handleStopSpam(SlashCommandInteractionEvent event) {
         TextChannel channel = event.getChannel().asTextChannel();
 
         if (spamTask != null) {
             spamTask.cancel(true);
             spamTask = null;
 
-            for (String id : sentMessageIds) {
-                channel.deleteMessageById(id).queue(
-                        success -> logger.info("Deleted message: {}", id),
-                        err -> logger.warn("Failed to delete message: {}", err.getMessage())
-                );
-            }
-            sentMessageIds.clear();
+            event.getHook().sendMessage("Stopping spam and cleaning up messages...").queue(msg -> {
+                final Iterator<String> iterator = sentMessageIds.iterator();
+                final Runnable deleteTask = new Runnable() {
+                    @Override
+                    public void run() {
+                        if (iterator.hasNext()) {
+                            String id = iterator.next();
+                            channel.deleteMessageById(id).queue(
+                                    success -> logger.info("Deleted message: {}", id),
+                                    err -> logger.warn("Failed to delete message: {}", err.getMessage())
+                            );
+                        } else {
+                            currentSpamTargetId = null;
+                            sentMessageIds.clear();
+                            msg.editMessage("✅ Spam stopped and messages deleted.").queue();
+                            return;
+                        }
+                        scheduler.schedule(this, 250, TimeUnit.MILLISECONDS);
+                    }
+                };
+                scheduler.schedule(deleteTask, 0, TimeUnit.MILLISECONDS);
+            });
 
-            channel.sendMessage("Stopped spamming <@" + currentSpamTargetId + "> and deleted spam messages.").queue();
-            currentSpamTargetId = null;
         } else {
-            channel.sendMessage("No spam session running.").queue();
+            event.getHook().sendMessage("No spam session running.").queue();
         }
     }
 
-    public static void handleClearChat(MessageReceivedEvent event) {
+
+    public static void handleClearChat(SlashCommandInteractionEvent event) {
         TextChannel channel = event.getChannel().asTextChannel();
+
         if (!ALLOWED_CLEAR_CHANNEL_IDS.contains(channel.getId())) {
-            channel.sendMessage("❌ This command is not allowed in this channel.").queue();
+            event.getHook().sendMessage("❌ This command is not allowed in this channel.").queue();
             return;
         }
-        deleteAllMessages(channel, 0);
+
+        event.getHook().sendMessage("🧹 Clearing messages...").queue(confirmationMessage -> {
+            deleteAllMessagesPreserving(channel, 0, event, confirmationMessage.getId());
+        });
     }
 
-    private static void deleteAllMessages(TextChannel channel, int totalDeleted) {
+
+    private static void deleteAllMessagesPreserving(TextChannel channel, int totalDeleted, SlashCommandInteractionEvent event, String preserveMessageId) {
         channel.getHistory().retrievePast(100).queue(messages -> {
             if (messages.isEmpty()) {
-                channel.sendMessage("✅ Cleared " + totalDeleted + " messages.").queue();
+                event.getHook().editOriginal("✅ Cleared " + totalDeleted + " messages.").queue();
                 return;
             }
 
             List<net.dv8tion.jda.api.entities.Message> deletable = messages.stream()
+                    .filter(m -> !m.getId().equals(preserveMessageId)) // Do not delete the bot's own message
                     .filter(m -> m.getTimeCreated().isAfter(OffsetDateTime.now().minusDays(14)))
                     .toList();
 
+            if (deletable.isEmpty()) {
+                // Nothing to delete this round — fetch more
+                deleteAllMessagesPreserving(channel, totalDeleted, event, preserveMessageId);
+                return;
+            }
+
             channel.deleteMessages(deletable).queue(
-                    success -> deleteAllMessages(channel, totalDeleted + deletable.size()),
-                    error -> channel.sendMessage("❌ Error: " + error.getMessage()).queue()
+                    success -> deleteAllMessagesPreserving(channel, totalDeleted + deletable.size(), event, preserveMessageId),
+                    error -> {
+                        logger.error("Failed to delete messages: {}", error.getMessage());
+                        event.getHook().editOriginal("❌ Error while deleting messages: " + error.getMessage()).queue();
+                    }
             );
+        }, error -> {
+            logger.error("Failed to retrieve history: {}", error.getMessage());
+            event.getHook().editOriginal("❌ Error while retrieving messages: " + error.getMessage()).queue();
         });
     }
 
-    public static void handleHelp(MessageReceivedEvent event) {
-        event.getChannel().sendMessage(CommandRegistry.getHelpMessage()).queue();
+
+    public static void handleHelp(SlashCommandInteractionEvent event) {
+        event.getHook().sendMessage(getHelpMessage()).queue();
     }
 
-    public static void handleCoinFlip(MessageReceivedEvent event) {
-        String result = Math.random() < 0.5 ? "🪙 Heads!" : "🪙 Tails!";
-        event.getChannel().sendMessage(result).queue();
+    public static String getHelpMessage() {
+        StringBuilder sb = new StringBuilder("🤖 **Available Commands:**\n");
+
+        sb.append("`/help` - Displays a list of available commands.\n")
+                .append("`/coinflip` - Flips a coin (Heads/Tails).\n")
+                .append("`/picker <options>` - Randomly picks an option from a comma-separated list.\n")
+                .append("`/clearchat` - Clears messages in allowed channels.\n")
+                .append("`/stopspam` - Stops an ongoing spam session.\n")
+                .append("`/spam <target>` - Starts a spam session targeting a user.\n");
+
+        return sb.toString();
     }
 
-    public static void handlePicker(MessageReceivedEvent event) {
-        String content = event.getMessage().getContentRaw();
-        String[] lines = content.replaceFirst("(?i)^/picker\\s*", "").split(",");
+    public static void handleCoinFlip(SlashCommandInteractionEvent event) {
+        String result = random.nextBoolean() ? "🪙 Heads!" : "🪙 Tails!";
+        event.getHook().sendMessage(result).queue();
+    }
 
-        if (lines.length < 2) {
-            event.getChannel().sendMessage("❌ Provide at least two options.").queue();
+    public static void handlePicker(SlashCommandInteractionEvent event) {
+        OptionMapping optionsOption = event.getOption("options");
+
+        if (optionsOption == null) {
+            event.getHook().sendMessage("❌ Please provide a comma-separated list of options.").queue();
             return;
         }
-        if (lines.length > 10) {
-            event.getChannel().sendMessage("❌ No more than 10 options allowed.").queue();
+
+        String[] options = optionsOption.getAsString().split(",");
+
+        if (options.length < 2) {
+            event.getHook().sendMessage("❌ Provide at least two options.").queue();
             return;
         }
 
-        List<String> options = Arrays.stream(lines).map(String::trim).collect(Collectors.toList());
+        if (options.length > 10) {
+            event.getHook().sendMessage("❌ No more than 10 options allowed.").queue();
+            return;
+        }
+
+        List<String> trimmedOptions = Arrays.stream(options).map(String::trim).toList();
         TextChannel channel = event.getChannel().asTextChannel();
 
-        // Rotation states for spinning effect
-        String[] rotationStates = {"|", "/", "-", "\\"};
-        int[] stateIndex = {0};
-
-        // Send initial message
         channel.sendMessage("🎡 Preparing the spinning wheel...").queue(message -> {
-            ScheduledExecutorService scheduler = Executors.newSingleThreadScheduledExecutor();
-            int[] spinIndex = {0}; // Track current option
-            int spinCycles = 10; // Fewer cycles due to slower updates
-            long baseIntervalMs = 1000; // 1 edit per second to respect rate limit
-            int slowDownStart = spinCycles - 3; // Slow down in last 3 cycles
+            int spinCycles = 10;
+            long baseIntervalMs = 1000;
+            int slowDownStart = spinCycles - 3;
+            int[] spinIndex = {0};
+            int[] cycle = {0};
 
-            // Create a task to update the message
             Runnable spinTask = new Runnable() {
-                int cycle = 0;
-
                 @Override
                 public void run() {
-                    if (cycle >= spinCycles) {
-                        // Final update: show the result
-                        String chosenOption = options.get(new Random().nextInt(options.size()));
-                        StringBuilder finalMessage = new StringBuilder();
-                        finalMessage.append("🎡 **The wheel has stopped!** 🎉\n");
-                        finalMessage.append("**Chosen: ").append(chosenOption).append("**\n\n");
-                        finalMessage.append("Options:\n");
-                        for (int i = 0; i < options.size(); i++) {
-                            finalMessage.append(i == options.indexOf(chosenOption) ? "➡️ " : "   ")
-                                    .append(options.get(i)).append("\n");
+                    if (cycle[0] >= spinCycles) {
+                        String chosen = trimmedOptions.get(random.nextInt(trimmedOptions.size()));
+                        StringBuilder finalMessage = new StringBuilder("🎡 **The wheel has stopped!** 🎉\n");
+                        finalMessage.append("**Chosen: ").append(chosen).append("**\n\nOptions:\n");
+                        for (String opt : trimmedOptions) {
+                            finalMessage.append(opt.equals(chosen) ? "➡️ " : "   ").append(opt).append("\n");
                         }
                         message.editMessage(finalMessage.toString()).queue();
-                        scheduler.shutdown();
                         return;
                     }
 
-                    // Calculate interval for slow-down effect
-                    long intervalMs = baseIntervalMs;
-                    if (cycle >= slowDownStart) {
-                        intervalMs = baseIntervalMs + (cycle - slowDownStart) * 500; // Increase by 500ms per cycle
+                    int currentIndex = spinIndex[0]++ % trimmedOptions.size();
+                    StringBuilder spinMsg = new StringBuilder("🎡 **Spinning ")
+                            .append(new String[]{"|", "/", "-", "\\"}[cycle[0] % 4])
+                            .append("** (").append(cycle[0] + 1).append("/").append(spinCycles).append(")\n")
+                            .append("Current: ").append(trimmedOptions.get(currentIndex)).append("\n\nOptions:\n");
+
+                    for (int i = 0; i < trimmedOptions.size(); i++) {
+                        spinMsg.append(i == currentIndex ? "➡️ " : "   ").append(trimmedOptions.get(i)).append("\n");
                     }
 
-                    // Spinning update
-                    int currentIndex = spinIndex[0]++ % options.size();
-                    String currentState = rotationStates[stateIndex[0]++ % rotationStates.length];
-                    StringBuilder spinMessage = new StringBuilder();
-                    spinMessage.append("🎡 **Spinning %s** (%d/%d)\n".formatted(currentState, cycle + 1, spinCycles));
-                    spinMessage.append("Current: ").append(options.get(currentIndex)).append("\n\n");
-                    spinMessage.append("Options:\n");
-                    for (int i = 0; i < options.size(); i++) {
-                        spinMessage.append(i == currentIndex ? "➡️ " : "   ")
-                                .append(options.get(i)).append("\n");
-                    }
-                    message.editMessage(spinMessage.toString()).queue();
-
-                    // Reschedule with new interval for slow-down
-                    scheduler.schedule(this, intervalMs, TimeUnit.MILLISECONDS);
-                    cycle++;
+                    message.editMessage(spinMsg.toString()).queue();
+                    long delay = baseIntervalMs + Math.max(0, (cycle[0] - slowDownStart) * 500L);
+                    cycle[0]++;
+                    scheduler.schedule(this, delay, TimeUnit.MILLISECONDS);
                 }
             };
 
-            // Start the spinning updates
             scheduler.schedule(spinTask, 0, TimeUnit.MILLISECONDS);
         });
     }

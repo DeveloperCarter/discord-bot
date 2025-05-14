@@ -1,6 +1,7 @@
-# Use OpenJDK 17 as the base image
-FROM openjdk:17-jdk-slim
-
+# Minimalist image: 100MB smaller than jdk-slim
+FROM eclipse-temurin:17-jdk-alpine AS build
+# Add:
+ENV JAVA_TOOL_OPTIONS="-XX:+UseSerialGC -Xmx384m -Xms128m -XX:MaxRAMPercentage=75"
 # Set working directory
 WORKDIR /app
 

@@ -10,19 +10,20 @@ sourceCompatibility = '17'
 
 repositories {
     mavenCentral()
+    maven { url 'https://oss.sonatype.org/content/repositories/releases/' } // Added this line for Sonatype repository
 }
+
 
 tasks.withType(JavaCompile).configureEach {
     options.encoding = 'UTF-8'
 }
-dependencies {
-    implementation "net.dv8tion:JDA:5.0.0-beta.13"
-    implementation 'com.sun.mail:jakarta.mail:2.0.1' // or latest
-    implementation 'io.github.cdimascio:dotenv-java:2.2.4'
-    implementation 'org.slf4j:slf4j-api:2.0.9'
-    implementation 'org.slf4j:slf4j-simple:2.0.9'
-    implementation 'com.google.code.gson:gson:2.10.1'
 
+dependencies {
+    implementation 'net.dv8tion:JDA:5.5.1'  // Updated JDA dependency to version 5.5.1
+    implementation 'com.sun.mail:jakarta.mail:2.0.1'
+    implementation 'io.github.cdimascio:dotenv-java:2.2.4'
+    implementation 'ch.qos.logback:logback-classic:1.5.12'
+    implementation("net.sf.trove4j:core:3.1.0")
     testImplementation platform('org.junit:junit-bom:5.10.0')
     testImplementation 'org.junit.jupiter:junit-jupiter'
 }
@@ -44,3 +45,5 @@ shadowJar {
         attributes 'Main-Class': application.mainClass
     }
 }
+
+applicationDefaultJvmArgs = ["-Xmx384m", "-Xms128m", "-XX:+UseSerialGC"]
