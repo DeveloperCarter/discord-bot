@@ -1,24 +1,40 @@
-# Minimalist image: 100MB smaller than jdk-slim
+# Stage 1: Build
 FROM eclipse-temurin:17-jdk-alpine AS build
-# Add:
+
+# JVM options for lighter memory footprint during build (optional)
 ENV JAVA_TOOL_OPTIONS="-XX:+UseSerialGC -Xmx384m -Xms128m -XX:MaxRAMPercentage=75"
-# Set working directory
+
 WORKDIR /app
 
-# Copy the entire project (including Gradle wrapper and wrapper JAR)
-COPY . /app
+# Copy only Gradle wrapper files first to leverage caching of Gradle distribution and dependencies
+COPY gradlew .
+COPY gradle/wrapper/gradle-wrapper.properties gradle/wrapper/
+COPY gradle/wrapper/gradle-wrapper.jar gradle/wrapper/
 
-# Ensure the Gradle wrapper is executable
 RUN chmod +x ./gradlew
 
-# Build the fat JAR using Shadow plugin (bundles dependencies)
+# Pre-cache Gradle dependencies and distribution
+RUN ./gradlew --no-daemon --version
+
+# Now copy rest of the project files
+COPY . .
+
+# Build the fat jar (shadowJar)
 RUN ./gradlew clean shadowJar --no-daemon
 
-# Copy .env (optional if you mount with --env-file)
-# COPY .env /app/.env    # if needed, otherwise use --env-file
+# Stage 2: Runtime - Minimal image
+FROM eclipse-temurin:17-jre-alpine
 
-# Expose any ports if necessary
+# JVM options to limit memory usage in container
+ENV JAVA_TOOL_OPTIONS="-XX:+UseSerialGC -Xmx384m -Xms128m -XX:MaxRAMPercentage=75"
+
+WORKDIR /app
+
+# Copy the fat JAR from build stage
+COPY --from=build /app/build/libs/discord-bot-final-1.0-SNAPSHOT-all.jar ./app.jar
+
+# Expose any port your bot might need (optional, mostly for web apps)
 EXPOSE 8080
 
-# Run the fat JAR (Shadow output contains all dependencies)
-CMD ["java", "-jar", "build/libs/discord-bot-final-1.0-SNAPSHOT-all.jar"]
+# Run the jar
+CMD ["java", "-jar", "app.jar"]
