@@ -106,22 +106,21 @@ public class DiscordBot extends ListenerAdapter {
                 event.getChannel().getId() + "/" +
                 event.getMessageId();
 
-        String emailBody = String.format("""
-            \uD83D\uDEA8 RAID ALERT DETECTED \uD83D\uDEA8
-
-            User: %s
-            Channel: #%s
-            Message: %s
-            Time: %s
-            Link: %s
-            """,
+        return String.format("""
+                        \uD83D\uDEA8 RAID ALERT DETECTED \uD83D\uDEA8
+                        
+                        User: %s
+                        Channel: #%s
+                        Message: %s
+                        Time: %s
+                        Link: %s
+                        """,
                 username,
                 channelName,
                 event.getMessage().getContentDisplay(),
                 new Date(),
                 messageLink
         );
-        return emailBody;
     }
 
 
@@ -269,7 +268,6 @@ public class DiscordBot extends ListenerAdapter {
                     .setComponents(ActionRow.of(buttons.toArray(new Button[0])))
                     .queue();
         }
-
         event.deferEdit().queue();
     }
 }

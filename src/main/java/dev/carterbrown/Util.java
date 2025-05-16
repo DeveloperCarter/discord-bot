@@ -47,7 +47,7 @@ public class Util {
         return sb.toString();
     }
 
-   public static void deleteAllMessagesPreserving(TextChannel channel, int totalDeleted, Message messageToEdit, SlashCommandInteractionEvent event) {
+    public static void deleteAllMessagesPreserving(TextChannel channel, int totalDeleted, Message messageToEdit, SlashCommandInteractionEvent event) {
         channel.getHistory().retrievePast(100).queue(messages -> {
             if (messages.isEmpty()) {
                 EmbedBuilder doneEmbed = new EmbedBuilder()
@@ -107,6 +107,4 @@ public class Util {
             messageToEdit.editMessageEmbeds(errorEmbed.build()).queue();
         });
     }
-
-
 }
